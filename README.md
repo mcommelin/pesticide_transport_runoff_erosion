@@ -16,7 +16,7 @@ To run the code and analysis for this research the following software and data i
  - RStudio, download from: https://www.rstudio.com/
  - the primary dataset
  
-This repository should be downloaded, and the primary dataset added in a subfolder 'data/'. Then open the file 'P_general_overview.Rproj'. From the different R codes can be executed, after installation of required packages with: 'install.packages("package name")'.
+This repository should be downloaded, and the primary dataset added in a subfolder 'data/'. Then open the file 'paper_analysis.Rproj'. From the different R codes can be executed, after installation of required packages with: 'install.packages("package name")'.
 
 
 # Session info
