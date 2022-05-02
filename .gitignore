@@ -1,0 +1,17 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.png
+images/*
+data/*
+Communication/*
+Analysis/*
+*.html
+*.csv
+*.dat
+*.xlsx
+pesticide_calculations_nicolas.R
+Paper/*
+gis_data/*
+*.jpg
