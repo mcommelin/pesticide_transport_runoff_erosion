@@ -290,7 +290,7 @@ tss_est <- lc_data %>%
          sed_conc = (est_mass * 1000) / (vol_sed + vol_wat),
          sed_gr = est_mass / n_bot) %>%
   select(pest_ID, sed_conc, sed_gr)
-write_csv(tss_est, "tss_20200812.csv")
+write_csv(tss_est, "sources/tss_20200812.csv")
 
 ### combine A + B peaks -----------------
 #' combine peak areas of A and B compounds and update lc_data table
