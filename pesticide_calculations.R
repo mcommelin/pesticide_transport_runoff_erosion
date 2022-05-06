@@ -1,9 +1,7 @@
-# Load and analyze the results generated from Masslynx
+# Load and analyze the raw data LC-MS/MS results exported from MassLynx
 
 # Initialization ------------------
 library(tidyverse)
-
-# Functions
 
 # GLY data ----------------------------------------------------------------
 ### load data ----------------
@@ -191,7 +189,7 @@ lc_data <- read_csv("data/LC_multi.csv") %>%
   mutate(ACN_ml = aimed_w_sample * 2,
          an_name = str_replace(an_name, "-B", "-LC")) %>%
   arrange(week, an_code)
-
+# batch number of weeks with diluted samples form earlier batches
 dil_wks <- c("12", "18")
 #' Drop 2nd 'B4 Sta 1.25' from batch 12 - this has a bad overall response, and can not be included.
 lc_data <- lc_data %>%
@@ -262,17 +260,19 @@ vwc_lc <- lc_data %>%
 vwc_rse <- summary(lm(vwc_lc$vwc_lc ~ vwc_lc$vwc_gly))$sigma
 
 #' The salts in the lc-multi have attracted some water after drying, this causes negative vwc values
-#' the solution is to use the vwc values of the gly samples.
+#' the solution for this problem is to use the vwc values of the gly samples.
 
 lc_data <- lc_data %>%
   left_join(vwc_gly, by = "an_name")
 
-### calculate TSS for 20200812 --------------------
+### calculate TSS for 2020-08-12 --------------------
+#' this event only had 1 bottle per sample moment. So either pesticides or TSS could be analyzed
+#' We decided to analyze pesticides, and afterwards estimate TSS from the pesticide samples.
 tss_est_gly <- gly_data %>%
   select(pest_ID, aimed_w_sample) %>%
   rename(aimed_w_gly = aimed_w_sample)
 
-cent_tube_w <- read_csv("data/cent_tube_w.csv") %>%
+cent_tube_w <- read_csv("sources/cent_tube_w.csv") %>%
   summarise(e_w = mean(e_w))
 cent_tube_w <- cent_tube_w$e_w
 est_vol_samp <- 645 # based on the mean + sd of other samples in 2020.
@@ -345,7 +345,7 @@ limit <- tibble(compound = c(),
                 loq = c(),
                 limit = c())
 nms_basic <- subset(names(lc_data), !str_detect(names(lc_data), "(RT|Ar)"))
-    ### loop over compounds -----------------------
+### loop over compounds -----------------------
 for (j in seq_along(compounds)) {
   nms <- str_subset(names(lc_data), compounds[j])
   nms <- c(nms, nms_basic)
@@ -547,7 +547,6 @@ model_mean_stats <- models_stats %>%
   group_by(name) %>%
   mutate(r_sqrd_m = mean(r_sqrd), n = n())
 
-
 # analysis of different recovery for different QC classes
 recov_analysis <- pest_recovery %>%
   mutate(class = if_else(str_detect(an_name, "QC-"), "QC", "BLANK"),
@@ -563,7 +562,7 @@ recov_analysis <- pest_recovery %>%
 
 # Calculate output tables -----------------
 
-#' dilutions batch_3_4
+#' save results of batch 3 and 4 to calculate dilutions
 batch_3_4 <- filter(qual_result, !(week %in% dil_wks)) %>%
   arrange(pest_ID)
 
@@ -606,7 +605,7 @@ dilute2 <- limit %>%
 #### find wrong dilutions batch 12----------------
 #' dilute_samples.csv is the old version, on which the actual preparation of batch12 was based. 
 #' See code version before 26-03-2021 to recreate result.
-dilute_old <- read_csv("dilute_samples.csv") %>%
+dilute_old <- read_csv("sources/dilute_samples.csv") %>%
   arrange(an_name)
 dilute_new <- select(lc_dilute, -week) %>%
   arrange(an_name)
@@ -617,7 +616,7 @@ dilute_compare <- left_join(dilute_ns, dilute_os, by = "an_name")
 dilute_error <- filter(dilute_compare, sum != sum_o)
 
 # 0 = not dilute, 1 = must be diluted not done, 2 = diluted not needed, 3 = diluted and done
-dilute_diff <- (select(dilute_old, -an_name, -pest_ID, -sum, -samp_type) * 2) + select(dilute_new, -an_name, -pest_ID, -sum, -samp_type)
+dilute_diff <- (select(dilute_old, -an_name, -pest_ID, -sum, -samp_type, -'Trinexapac-ethyl', -Tebuconazole) * 2) + select(dilute_new, -an_name, -pest_ID, -sum, -samp_type)
 dilutions_error_count <- table(unlist(dilute_diff))
 dilute_diff <- bind_cols(arrange(nm_cols, an_name), dilute_diff) %>%
   left_join(dilute_ns, by = "an_name")
@@ -637,6 +636,9 @@ not_diluted <- anti_join(qual_result, dil_batches[[1]], by = "an_name") %>%
   filter(week != "18") %>%
   arrange(pest_ID, samp_type, week)
 
+#'the solution of updating the final results with the diluted values works,
+#'but is very slow
+
 samples <- dil_batches[[1]]$an_name
 comp_list <- vector("list", length = length(compounds))
 samp_list <- vector("list", length = length(samples))
@@ -653,6 +655,8 @@ for (i in seq_along(compounds)) {
   }
   comp_list[[i]] <- bind_rows(samp_list)
 }
+
+
 batch_cols <- dil_batches[[1]][1:4]
 diluted_upd <- bind_cols(comp_list) %>%
   mutate(an_name = samples) %>%
@@ -695,7 +699,7 @@ dil_new <- filter(lc_dilute, sum > 0)
 b12_l <- semi_join(dil_batches[[1]], dil_new, by = "an_name") %>% arrange(an_name) %>% 
   select(all_of(str_subset(names(.), "qual_")))
 dv2_l <- semi_join(dil_new, dil_batches[[1]], by = "an_name") %>% arrange(an_name) %>% 
-  select(c(3:35))
+  select(c(3:33))
 loq_check <- b12_l * dv2_l
 
 # check division LOQ, dilute, 0 and 1.

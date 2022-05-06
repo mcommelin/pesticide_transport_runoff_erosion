@@ -19,6 +19,8 @@ library(extrafont)
 library(ggforce)
 library(broom)
 library(pander)
+library(ggpubr)
+library(rstatix)
 
 # A specific version of Rttf2pt1 is needed to run extrafont
 #remotes::install_version("Rttf2pt1", version = "1.3.8")
@@ -182,6 +184,22 @@ runoff_days <- wb_data %>%
   filter(count >= 10)
 length(runoff_days$date)
 
+# analysis of Qmax and Qtotal for the 39 observed runoff events.
+runoff_analysis <- wb_data %>%
+  mutate(date = date(timestamp)) %>%
+  semi_join(runoff_days, by = "date") %>%
+  arrange(timestamp) %>%
+  mutate(secs = as.numeric(lead(timestamp) - timestamp),
+         Ha = Wh - crest_nap,
+         Q = Qparshall(Ha, 0.609),
+         Q_m3 = Q * secs) %>%
+  group_by(date) %>%
+  filter(Q >= 0.015) %>%
+  summarise(Q_max = max(Q),
+            Q_m3= sum(Q_m3, na.rm = T),
+            D = sum(secs) / 60) %>%
+  mutate(group = "All observed")
+  
 # Precipitation data ------------------------------------------------------
 #' this data is provided as secondary source, it is clipped from the 5 minute radar
 #' of KNMU for 2018 - 2020.
@@ -263,6 +281,9 @@ total <- bind_rows(df_totals) %>%
          evi = (Pi_max * P)/D,
          mean_tss= Sed_kg / Q_m3)
 
+# store data for runoff overview visualization
+erosion25 <- total
+
 # CH 3.1 - analysis of relation between rain and erosion etc.
 fit_total <- total[-17, ]   # remove event 16-08-2020 because this is an outlier
 ggplot(fit_total) + geom_point(aes(x = Q_m3, y = P))
@@ -303,11 +324,15 @@ compound_char <- read_csv("ext_data/AI_characteristics.csv") %>%
 
 # analysed AS
 analysed <- str_remove(str_subset(names(lc_all_data), "conc"), "conc_")
-# remove terbuthylazine, glyphosate and AMPA from analysis.
+
+# remove terbuthylazine from analysis, is not applied or detected, we added it to analysis
+# because it is often detected on fields, however does not have a function in this research
 analysed_comp <- tibble(compound = analysed) %>%
-  filter(compound != "Glyphosate",
-         compound != "AMPA",
-         compound != "Terbuthylazine")
+  filter(compound != "Terbuthylazine")
+
+#' due to point source pollution, the Glyphosate and AMPA results for 3 events are removed.
+point_src_dates <- c("2020-09-23", "2020-10-08", "2020-10-22", "2020-09-26") 
+point_src_compounds <- c("Glyphosate", "AMPA")
 
 ## Methods and analysis -------------------------
 #' AI analysed
@@ -356,12 +381,19 @@ pest_ts <- ev_samples %>%
   distinct() %>%
   filter(!is.na(pest_ID)) %>%
   select(-timestamp)
+# store point source dates for GLY and AMPA in separate file and remove from analysis
 lc_all <- lc_all_data %>%
   left_join(pest_ts, by = "pest_ID") %>%
   filter(!is.na(date)) %>%
-  select(-an_name, -pest_ID, -week, -conc_Terbuthylazine,
-         -conc_AMPA, -conc_Glyphosate) %>%
+  select(-an_name, -pest_ID, -week, -conc_Terbuthylazine) %>%
   replace(is.na(.), 0)
+pnt_src_lc <- lc_all %>%
+  filter(date > "2020-09-10") %>%
+  select(samp_type:sed_gr)
+lc_all <- lc_all %>%
+  mutate(conc_Glyphosate = if_else(date > "2020-09-10", 0, conc_Glyphosate),
+         conc_AMPA = if_else(date > "2020-09-10", 0, conc_AMPA))
+
 lc_sed <- lc_all %>%
   filter(samp_type == "S")%>%
   group_by(date, samp_type) %>%
@@ -370,7 +402,7 @@ lc_all <- lc_all %>%
   select(-sed_gr) %>%
   filter(samp_type == "W") %>%
   group_by(date, samp_type) %>%
-  summarise_at(vars(starts_with('conc_')), funs(mean(., na.rm = T))) %>%
+  summarise_at(vars(starts_with('conc_')), ~mean(., na.rm = T)) %>%
   bind_rows(lc_sed) %>%
   mutate(date = date(date))
 
@@ -405,9 +437,15 @@ total_pest <- bind_rows(df_totals) %>% bind_cols(ev_dates) %>%
   mutate(number = c(1:14)) %>%
   select(date, TP_sed, TP_wat, P_sed_n, P_wat_n, TP_wat_loq, number)
 # add pesticide data to total overview table
-total <- left_join(total_pest, total) %>%
+total <- left_join(total_pest, erosion25) %>%
   mutate(date_lab = format(date, "%d-%m-%Y"),
-         PP_rat = TP_sed / (TP_sed + TP_wat))
+         date_lab = if_else(date > "2020-09-10", str_c("*", date_lab), date_lab),
+         PP_rat = TP_sed / (TP_sed + TP_wat),
+         conc_DP = TP_wat / (Q_m3 * 1000),
+         conc_PP = TP_sed / Sed_kg,
+         fact_phase = conc_PP / conc_DP,
+         Tot_P = (TP_wat + TP_sed) / 1000,
+         mean_p = ((TP_wat + TP_sed) * 1000) / ((Q_m3 * 1000) + (Sed_kg / 2.65)))
 
 # 3.1 Runoff, erosion and pesticide transport ------------------------
 
@@ -427,8 +465,6 @@ fit_pest <- lm(TP_sed ~ Sed_kg, data = fit_total)
 summary(fit_pest)
 ggplot(total) + geom_point(aes(x = mean_tss, y = Pi_max))
 
-sum(total$PP_rat > 0.5)    # events with >50% PP mass
-
 #' CH 3.1 - total pesticide and runoff losses over 14 events
 pest_total <- tibble(S = sum(total$TP_sed, na.rm = T) / 1000, # g -pesticides in water
                      W = sum(total$TP_wat, na.rm = T) / 1000, # g - pesticides in TSS
@@ -437,7 +473,7 @@ pest_total <- tibble(S = sum(total$TP_sed, na.rm = T) / 1000, # g -pesticides in
                      tot_qs = sum(total$Sed_kg) / 1000,    # ton - discharged sediment
                      mean_pw = W / tot_qw * 1000,  # ug L - mean load pw
                      mean_ps = S / tot_qs * 1000,  # ug kg - mean load ps
-                     mean_p = (S + W) / (tot_qw + tot_qs) * 1000)  # overall mean load
+                     mean_p = (S + W) / (tot_qw + (tot_qs/2.65)) * 1000)  # overall mean load
 
 ### Fig 2 calculate -------------------------------
 # set unit of pesticides to grams
@@ -479,8 +515,8 @@ comp_box$other_s <- factor(comp_box$other_s, levels = level_fig3_s)
 comp_box$other_w <- factor(comp_box$other_w, levels = level_fig3_w)
 
 # CH 3.1 - number of compounds detected
-mean(total$P_sed_n) # mean number detected in TSS per event
-mean(total$P_wat_n) # mean number detected in water per event
+str_c(min(total$P_sed_n), " - ", max(total$P_sed_n))
+str_c(min(total$P_wat_n), " - ", max(total$P_wat_n))
 
 # CH 3.1 - total different compounds detected in TSS and water
 comp_overview <- bind_rows(df_pest) %>%
@@ -565,7 +601,9 @@ for (i in seq_along(name)) {
     relation <- df_pest[[i]] %>%
       select(-(tot_m:label_oob)) %>%
       pivot_wider(names_from = "samp_type", values_from = "conc", 
-                  names_prefix = "conc_") 
+                  names_prefix = "conc_")
+    AMPA_pest <- relation %>%
+      filter(compound == "AMPA")
     relation <- relation %>%
       left_join(field_appl_all, by = "compound") %>%
       mutate(daa = as.numeric(days(date - appl_date))/86400,
@@ -577,8 +615,12 @@ for (i in seq_along(name)) {
       #filter(daa_min != 9999) %>%
       distinct(date, compound, daa_min, .keep_all = TRUE) %>%
       arrange(desc(conc_S)) %>%
-      left_join(compound_char, by = "compound") 
-    df_relation[[i]] <- relation
+      left_join(compound_char, by = "compound")
+    AMPA_add <- relation %>%
+      filter(compound == "Glyphosate") %>%
+      select(large:dt50_class) %>%
+      bind_cols(AMPA_pest)
+    df_relation[[i]] <- bind_rows(relation, AMPA_add)
   }
 }
 
@@ -699,6 +741,7 @@ appl_dt50 <- appl_rate_AS %>%
   summarise(m_appl = sum(appl_rate),
             n_appl = n())
 mass_dt50 <- AS_transport %>%
+  filter(compound != "AMPA") %>%
   group_by(dt50_class) %>%
   summarise(n_trans = n(),
             m_PP = sum(PP_load),
@@ -715,6 +758,7 @@ appl_koc <- appl_rate_AS %>%
   summarise(m_appl = sum(appl_rate),
             n_appl = n())
 mass_koc <- AS_transport %>%
+  filter(compound != "AMPA") %>%
   group_by(koc_class) %>%
   summarise(n_trans = n(),
             m_PP = sum(PP_load),
@@ -731,6 +775,7 @@ appl_Sw <- appl_rate_AS %>%
   summarise(m_appl = sum(appl_rate),
             n_appl = n())
 mass_Sw <- AS_transport %>%
+  filter(compound != "AMPA") %>%
   group_by(Sw_class) %>%
   summarise(n_trans = n(),
             m_PP = sum(PP_load),
@@ -740,17 +785,31 @@ mass_Sw <- AS_transport %>%
   mutate(trans_rate = (m_PP + m_DP) / (sum(m_PP) + sum(m_DP)),
          appl_rate = m_appl / sum(m_appl))
 # save tables 
-write_csv(mass_dt50, "table_dt50.csv")
-write_csv(mass_koc, "table_koc.csv")
-write_csv(mass_Sw, "table_sw.csv")
+# write_csv(mass_dt50, "table_dt50.csv")
+# write_csv(mass_koc, "table_koc.csv")
+# write_csv(mass_Sw, "table_sw.csv")
 
 #'check if all compounds in runoff are also detected on fields
 comp_runoff <- comp_tot_n %>%
   mutate(compound = as.character(compound)) %>%
   select(compound) %>%
   distinct(compound)
+
+#' range koc of AS in DP
+DP_AS_range <- AS_transport %>%
+  filter(DP_load > 0) %>%
+  select(koc) %>%
+  summarise(koc = str_c(min(koc), " - ", max(koc)))
+
+#' compound only in PP
+PP_no_DP <- outlet_all_dates %>%
+  filter(DBE < 11) %>%
+  filter(conc_S > 0 & conc_W < 0.1) %>%
+  distinct(compound) %>%
+  left_join(compound_char, by = "compound")
+
 #' dt50 of AS that are not transported
-comp_runoff <- anti_join(ai_analysed, comp_runoff, by = "compound") %>%
+dt50_no_transport <- anti_join(ai_analysed, comp_runoff, by = "compound") %>%
   left_join(compound_char) %>%
   select(compound, dt50)
 
@@ -802,7 +861,7 @@ for (i in seq_along(dt50_compounds)) {
     # DP range labels
     AS_range$DP_r[i] <- str_c(as.character(min(dt50_analysis[[i]]$conc_W)),
                               " - ", as.character(max(dt50_analysis[[i]]$conc_W)))
-    AS_range$rse_w[i] <- round(rse_w[1], digits = 3)
+    AS_range$rse_w[i] <- round(rse_w[1], digits = 2)
     AS_range$df_w[i] <- rse_w[2]
   }
   
@@ -819,7 +878,7 @@ for (i in seq_along(dt50_compounds)) {
   AS_range$PP_r[i] <- str_c(as.character(min(dt50_analysis[[i]]$conc_S)),
                             " - ", as.character(max(dt50_analysis[[i]]$conc_S)))
   AS_range$xpos[i] <- max(dt50_analysis[[i]]$DBE) * 0.6
-  AS_range$rse_s[i] <- round(rse_s[1], digits = 3)
+  AS_range$rse_s[i] <- round(rse_s[1], digits = 2)
   AS_range$df_s[i] <- rse_s[2]
 }
 
@@ -828,6 +887,26 @@ rse_range <- AS_range %>%
 dt50_analysis_all <- bind_rows(dt50_analysis)
 
 dt50_predict_all <- bind_rows(dt50_predict)
+dt50_r2 <- dt50_analysis_all %>%
+  select(compound, DBE, rel_w, rel_s) %>%
+  left_join(dt50_predict_all) %>%
+  group_by(compound) %>%
+  mutate(residuals_w = (rel_w - pred_w)^2,
+         squares_w = (rel_w - mean(rel_w, na.rm = T))^2,
+         explained_w = (pred_w - mean(rel_w, na.rm = T))^2,
+         residuals_s = (rel_s - pred_s)^2,
+         squares_s = (rel_s - mean(rel_s, na.rm = T))^2,
+         explained_s = (pred_s - mean(rel_s, na.rm = T))^2) %>%
+  summarise(SSR_w = sum(residuals_w),
+            SST_w = sum(squares_w),
+            SSE_w = sum(explained_w),
+            SSR_s = sum(residuals_s),
+            SST_s = sum(squares_s),
+            SSE_s = sum(explained_s),
+            r2_w = 1 - SSR_w/SST_w,
+            r2_s = 1- SSR_s/SST_s) %>%
+  mutate(sum_w = SSR_w + SSE_w,
+         sum_s = SSR_s + SSE_s)
 
 dt50_plot_all <- full_join(dt50_analysis_all, dt50_predict_all, by = c("compound", "DBE")) %>%
   left_join(rse_range, by = "compound") %>%
@@ -852,19 +931,30 @@ dt50_plot_all$compound <- factor(dt50_plot_all$compound, levels = dt50_compounds
 
 # % transport per landuse
 source_cereals <- c("Bixafen", "Epoxiconazole", "Isopyrazam")
-source_apples <- c("Fluxapyroxad", "Pyraclostrobin", "Chlorantraniliprole", "Difenoconazole") #, "Boscalid") <- not included because can also come from potatoes field even more likely
+source_apples <- c("Fluxapyroxad", "Pyraclostrobin", "Chlorantraniliprole", "Difenoconazole") 
+source_ap_pot <- c("Glyphosate", "Boscalid") # this two compounds can originate from apples or potato cultivation
 # contribution of landuse types to total transport
 appl_trans_DP <- sum(filter(AS_transport_rate, compound %in% source_apples)$tot_m_W) / pest_total[1,2] / 1000
 appl_trans_PP <- sum(filter(AS_transport_rate, compound %in% source_apples)$tot_m_S) / pest_total[1,1] / 1000
+trans_other_DP <- sum(filter(AS_transport_rate, compound %in% source_ap_pot)$tot_m_W) / pest_total[1,2] / 1000
+trans_other_PP <- sum(filter(AS_transport_rate, compound %in% source_ap_pot)$tot_m_S) / pest_total[1,1] / 1000
 cereal_trans_DP <- sum(filter(AS_transport_rate, compound %in% source_cereals)$tot_m_W) / pest_total[1,2] / 1000
 cereal_trans_PP <- sum(filter(AS_transport_rate, compound %in% source_cereals)$tot_m_S) / pest_total[1,1] / 1000
-pot_trans_DP <- 1 - appl_trans_DP - cereal_trans_DP
-pot_trans_PP <- 1 - appl_trans_PP - cereal_trans_PP
+
+pot_trans_DP <- 1 - appl_trans_DP - cereal_trans_DP - trans_other_DP
+pot_trans_PP <- 1 - appl_trans_PP - cereal_trans_PP - trans_other_PP
 
 # occurrence of AS from cereal fields
 filter(AS_transport, compound == "Bixafen")$n / 14
 filter(AS_transport, compound == "Epoxiconazole")$n / 14
 filter(AS_transport, compound == "Isopyrazam")$n / 14
+
+# number of AS associated with potato cultivation
+n_AS_potato <- outlet_all_dates %>%
+  mutate(pot = if_else(year(date) == 2019 & last_applied == "B", 1, 0),
+         pot = if_else(year(date) == 2020 & last_applied == "A", 1, pot)) %>%
+  filter(pot == 1) %>%
+  distinct(compound)
 
 # Errors and uncertainty -----------------------------------
 #' Calculate uncertainty propagation for CH 2.5 and Table S.6
@@ -976,6 +1066,94 @@ SD_pest_w <- sqrt(Pest_sd^2 + 5^2)
 SD_pest_tss <- sqrt(Pest_sd^2 + SD_Qtss^2 + vwc_rse^2)
 
 # Supplementary materials ------------------
+## Fig S.2 calculate ------------
+# analyse the differences in runoff and erosion between the analysed and 
+# not analysed events.
+erosion25 <- erosion25 %>%
+  select(date, Sed_kg, Sed_conc_max, mean_tss)
+runoff_analysis <- left_join(runoff_analysis, erosion25, by = "date")
+events14 <- total %>%
+  select(date, Sed_kg, Sed_conc_max, mean_tss, D, Q_m3, Q_max) %>%
+  mutate(group = "Analyzed")
+not_analysed <- anti_join(runoff_analysis, events14, by = "date") %>%
+  mutate(group = "Not Analyzed")%>%
+  select(date, group, Sed_kg, Sed_conc_max, mean_tss, D, Q_m3, Q_max)
+
+analysed_w <- anti_join(runoff_analysis, not_analysed, by = "date") %>%
+  mutate(group = "Analyzed")
+#' events on 2019-08-18 is removed because the water level readings stay
+#' high for the rest of the day, this is an extreme outlier most likely due
+#' to sensor failure or obstruction.
+df_runoff_w <- bind_rows(analysed_w, not_analysed) %>%
+  filter(date != "2019-08-18") %>%
+  select(group, D, Q_m3, Q_max) %>%
+  pivot_longer(cols = (D:Q_max), names_to = "var", values_to = "value") %>%
+  mutate(value = if_else(value == -Inf, 0, value))
+
+df_runoff_s <- bind_rows(events14, not_analysed) %>%
+  filter(date != "2019-08-18") %>%
+  select(group, Sed_kg, Sed_conc_max, mean_tss) %>%
+  pivot_longer(cols = (Sed_kg:mean_tss), names_to = "var", values_to = "value") %>%
+  mutate(value = if_else(value == -Inf, 0, value)) %>%
+  filter(!is.na(value))
+
+df_runoff <- bind_rows(df_runoff_s, df_runoff_w)
+df_runoff$var <- factor(df_runoff$var, levels = c("Q_m3", "Q_max", "D",
+                                                  "Sed_kg", "Sed_conc_max", "mean_tss"),
+                          labels = c("Total discharge (m3)",
+                                     "Maximum discharge (m3/sec)",
+                                     "Duration (min)",
+                                     "Total erosion (kg)",
+                                     "Maximum TSS (g/L)",
+                                     "Mean TSS (g/L)"))
+                  
+# t-test difference between analysed and not analysed
+t_test_w <- df_runoff_w %>%
+  group_by(var) %>%
+  t_test(value ~ group) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance() %>%
+  add_xy_position(x = "group")
+t_test_s <- df_runoff_s %>%
+  group_by(var) %>%
+  t_test(value ~ group) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance() %>%
+  add_xy_position(x = "group")
+
+# compare means between total erosion in analysed and not analysed events
+mean(filter(df_runoff_s, var == "Sed_kg" & group == "Not Analyzed")$value, na.rm = T)
+mean(filter(df_runoff_s, var == "Sed_kg" & group == "Analyzed")$value, na.rm = T)
+
+## Point source calculations -------------------
+pnt_scr_sed <- pnt_src_lc %>%
+  filter(samp_type == "S")%>%
+  group_by(date, samp_type) %>%
+  summarise_at(vars(starts_with('conc_')), ~weighted.mean(., sed_gr, na.rm = T))
+pnt_src_conc <- pnt_src_lc %>%
+  select(-sed_gr) %>%
+  filter(samp_type == "W") %>%
+  group_by(date, samp_type) %>%
+  summarise_at(vars(starts_with('conc_')), ~mean(., na.rm = T)) %>%
+  bind_rows(pnt_scr_sed) %>%
+  mutate(date = date(date)) %>%
+  pivot_wider(names_from = samp_type, values_from = (conc_Glyphosate:conc_AMPA)) %>%
+  left_join(total, by = "date") %>%
+  select(-(TP_sed:TP_wat_loq)) %>%
+  filter(date != "2020-09-26") %>%
+  mutate(TP_sed_GLY = conc_Glyphosate_S * Sed_kg,
+         TP_sed_AMPA = conc_AMPA_S * Sed_kg,
+         TP_wat_GLY = conc_Glyphosate_W * Q_m3 * 1000,
+         TP_wat_AMPA = conc_AMPA_W * Q_m3 * 1000,
+         PP_rat_GLY = TP_sed_GLY / (TP_sed_GLY + TP_wat_GLY),
+         PP_rat_AMPA = TP_sed_AMPA / (TP_sed_AMPA + TP_wat_AMPA),
+         fact_phase_GLY = conc_Glyphosate_S / conc_Glyphosate_W,
+         fact_phase_AMPA = conc_AMPA_S / conc_AMPA_W)
+
+pnt_table <- pnt_src_conc %>%
+  select((date:conc_AMPA_S), starts_with("TP_"))
+write_csv(pnt_table, "pnt_table.csv")
+
 ## Table S.1 ---------------------------
 # Annex A - list of applied and analysed pesticides
 
@@ -1087,7 +1265,7 @@ my_theme = theme(
   axis.title.x = element_text(size = 12, family = "Times New Roman"),
   axis.text.x = element_text(size = 12, family = "Times New Roman"),
   axis.title.y = element_text(size = 12, family = "Times New Roman"),
-  plot.margin = margin(6, 0, 6, 0)
+  plot.margin = margin(6, 6, 6, 0)
 )
 
 ## figure 2 -----------
@@ -1099,12 +1277,12 @@ Q_plot <- ggplot(total)+
   geom_bar(aes(x = number, y = Q_m3), stat = "identity", width = 0.5, fill = colors1[2]) +
   theme_classic() +
   #geom_vline(xintercept = 4.5, linetype = "dashed") +
-  labs(x = "", y = bquote(Runof~(m^"3")), parse = T) +
+  labs(x = "", y = bquote(Runoff~(m^"3")), parse = T) +
   theme(axis.text.x = element_blank(), axis.ticks = element_blank()) +
   scale_x_continuous(position = "bottom", breaks = NULL) +
   my_theme
 
-Q_plot
+#Q_plot
 Sed_plot <- ggplot(total)+
   geom_bar(aes(x = number, y = Sed_kg), stat = "identity", width = 0.5, fill = colors1[1]) +
   theme_classic() +
@@ -1114,7 +1292,7 @@ Sed_plot <- ggplot(total)+
   theme(axis.text.x = element_text(angle = 45, hjust=1,vjust=1)) +
   my_theme
 
-Sed_plot
+#Sed_plot
 rain_plot <- ggplot(total)+
   geom_bar(data = total, aes(x = number, y = P), stat = "identity", width = 0.5, alpha = 0.5) +
   geom_point(data = total, aes(x = number, y = evi)) +
@@ -1125,10 +1303,8 @@ rain_plot <- ggplot(total)+
   theme(axis.text.x = element_blank(), axis.ticks = element_blank()) +
   labs(x = "", y = "P (mm) & \n EVI [-]", title = "", parse = T) +
   my_theme
-rain_plot
+#rain_plot
 
-# make the plot with the guides included and store legend 5,
-# than remake plot, without guides and add the legend with plotgrid.
 pest_plot <- ggplot(pest_tot) +
   geom_bar(aes(x = number, y = P, fill = samp_type), stat = "identity", position = "dodge", width = 0.5) +
   geom_errorbar(aes(x = number, y = P, ymin = P - error, ymax = P + error, fill = samp_type),
@@ -1136,26 +1312,29 @@ pest_plot <- ggplot(pest_tot) +
   theme_classic() +
   labs(x = "", y = "Discharged \n load (g)", title = "",
        parse = T) +
-  guides(fill = "none", color = "none") +
   scale_fill_manual(name = "", labels = c("PP", "DP"), values = colors1) +
   scale_x_continuous(breaks = 1:14, labels = total$date_lab) +
   theme(axis.text.x = element_text(angle = 45, hjust=1,vjust=1)) +
   my_theme +
   scale_y_continuous(expand = c(0,0)) 
-pest_plot
+#pest_plot
+
+# pest_plot without a legend
+pest_plot_ng <- pest_plot + 
+  theme(legend.position = "none")
 
 legend_5 <- get_legend(
   pest_plot + theme(legend.text.align = 0,
                     legend.box.margin = margin(0,0,0,0),
                     legend.position = c(0.5, 0.27)))
 
-plot_pest <- plot_grid(rain_plot, Q_plot, Sed_plot, pest_plot, 
+plot_pest <- plot_grid(rain_plot, Q_plot, Sed_plot, pest_plot_ng, 
                        nrow = 4, align = "v", 
                        axis = "rl", rel_heights = c(4,4,4,7), labels = c("A", "B", "C", "D"),
                        label_fontfamily = "Times New Roman", hjust = -1.5)
-plot_pest
+#plot_pest
 plot_pest2 <- plot_grid(plot_pest, legend_5, ncol = 2, rel_widths = c(2, .2))
-plot_pest2
+#plot_pest2
 
 ggsave("images/figure2.tiff", width = 180, height = 150, units = "mm",
        dpi = 450, device = "tiff")
@@ -1168,8 +1347,7 @@ colors3_s <- c("#7465AC", "#E6BB00", "#56B4E9",
              "#0072B2", "#CC0000", "#8df55b", "#999999")
 
 colors3_w <- c("#7465AC", "#56B4E9",
-               "#50ECCC", "#F0E442",
-               "#0072B2", "#CC0000", "#8df55b", "#999999")
+               "#F0E442", "#0072B2", "#CC0000", "#8df55b", "#999999")
 # figure PP
 event_bar_s <- ggplot()+
   geom_bar(data = filter(comp_box, samp_type == "S"), 
@@ -1188,7 +1366,7 @@ event_bar_s <- ggplot()+
   scale_fill_manual(values = colors3_s, name = "Active\nSubstance",
                     labels = function(x) str2expression(paste0(x))) +
   my_theme
-event_bar_s
+#event_bar_s
 #save plot without legend
 event_bar_sp <- event_bar_s + 
   theme(legend.position = "none")
@@ -1213,7 +1391,7 @@ event_bar_w <- ggplot()+
                     labels = function(x) str2expression(paste0(x))) +
   guides(fill = "none") +
   my_theme
-event_bar_w
+#event_bar_w
 
 # get legend form plot and add to plot grid.
 legend_4 <- get_legend(
@@ -1225,7 +1403,7 @@ plot <- plot_grid(event_bar_sp, event_bar_w, nrow = 2, align = "v", axis = "rl",
                   label_size = 12, rel_heights = c(4,4))
 plot2 <- plot_grid(plot, legend_4, ncol = 2, rel_widths = c(2, .8))
 
-ggsave("images/figure4.tiff", width = 180, height = 120, units = "mm", dpi = 300, device = "tiff")
+ggsave("images/figure3.tiff", width = 180, height = 120, units = "mm", dpi = 300, device = "tiff")
 
 ## figure 4 -------------------------
 # PP + DP
@@ -1245,5 +1423,26 @@ dt50_plot <- ggplot(dt50_plot_all) +
         panel.grid = element_blank(), plot.margin = margin(10, 10, 10, 10)) +
   labs(x = "Days after application", y = "Relative concentration") +
   my_theme
-dt50_plot  
-ggsave("images/dt50_all.tiff", width = 180, height = 120, units = "mm", dpi = 300, device = "tiff")
+#dt50_plot  
+ggsave("images/figure4.tiff", width = 180, height = 120, units = "mm", dpi = 300, device = "tiff")
+
+## figure S.2 -------------------
+# figure to compare runoff and erosion of 14 events with all 39 occurred.
+runoff_plot <- ggplot(df_runoff) +
+  geom_boxplot(aes(x = var, y = value, fill = group, alpha = group)) +
+  facet_wrap(~var, scale = "free", strip.position = "top") +
+  theme_bw() +
+  labs(x = "", y = "") +
+  scale_fill_manual(values = c("#0072B2", "#0072B2")) +
+  scale_alpha_manual(values = c(1,0.3)) +
+  scale_x_discrete(position = "top") +
+  theme(strip.background = element_blank(), strip.placement = "outside",
+        panel.grid = element_blank(),
+        axis.ticks.x = element_blank(), axis.text.x = element_blank(), 
+        strip.text.x = element_blank(), legend.position = "bottom",
+        legend.title = element_blank()) +
+  my_theme + 
+  theme(plot.margin = margin(5, 5, 5, 5))
+runoff_plot
+
+ggsave("images/figureS2.tiff", width = 180, height = 180, units = "mm", dpi = 300, device = "tiff")
