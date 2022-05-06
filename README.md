@@ -42,3 +42,15 @@ The calculations for the original manuscript where done using the following soft
 
 **Versions of loaded packages:** 
 _rstatix(v.0.7.0)_, _ggpubr(v.0.4.0)_, _pander(v.0.6.4)_, _broom(v.0.7.12)_, _ggforce(v.0.3.3)_, _extrafont(v.0.17)_, _hms(v.1.1.1)_, _ggrepel(v.0.9.1)_, _sf(v.1.0-7)_, _scales(v.1.1.1)_, _zoo(v.1.8-9)_, _cowplot(v.1.1.1)_, _lubridate(v.1.8.0)_, _aomisc(v.0.647)_, _multcompView(v.0.1-8)_, _car(v.3.0-12)_, _carData(v.3.0-5)_, _plyr(v.1.8.6)_, _drc(v.3.0-1)_, _MASS(v.7.3-55)_, _forcats(v.0.5.1)_, _stringr(v.1.4.0)_, _dplyr(v.1.0.8)_, _purrr(v.0.3.4)_, _readr(v.2.1.2)_, _tidyr(v.1.2.0)_, _tibble(v.3.1.6)_, _ggplot2(v.3.3.5)_ and _tidyverse(v.1.3.1)_
+
+
+Shield: [![CC BY 4.0][cc-by-shield]][cc-by]
+
+This work is licensed under a
+[Creative Commons Attribution 4.0 International License][cc-by].
+
+[![CC BY 4.0][cc-by-image]][cc-by]
+
+[cc-by]: http://creativecommons.org/licenses/by/4.0/
+[cc-by-image]: https://i.creativecommons.org/l/by/4.0/88x31.png
+[cc-by-shield]: https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg
