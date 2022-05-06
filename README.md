@@ -5,7 +5,7 @@ in which rainfall-runoff events where monitored in a small agricultural catchmen
 
 **Creator:**
  
-M.C. Commelin \n
+M.C. Commelin  
 Soil Physics and Land Management group, Wageningen University, 6708 WG Wageningen, The Netherlands 
 contact: meindert.commelin@wur.nl
 
