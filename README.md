@@ -11,10 +11,11 @@ Contact: meindert.commelin@wur.nl
 **Related publication:**  
 Pesticides are substantially transported in particulate phase, driven by land use, 
 rainfall event and pesticide characteristics – a runoff and erosion study in a small 
-agricultural catchment. M.C. Commelin et al. (2022).
+agricultural catchment. M.C. Commelin et al. (2022).  
+DOI: 
 
 **Related dataset:**  
-Runoff, erosion and pesticide transport in a small catchment in Limburg - The Netherlands
+Runoff, erosion and pesticide transport in a small catchment in Limburg - The Netherlands  
 DOI: 10.4121/19690684
 URL: 
 
